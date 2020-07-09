@@ -1,0 +1,4 @@
+{
+  "plugins": ["./try.js"],
+  "presets": ["@babel/preset-env"]
+}
