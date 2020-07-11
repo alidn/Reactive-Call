@@ -1,4 +1,5 @@
 module.exports = function (babel) {
+  const t = babel.types;
   return {
     visitor: {
       Program: {
@@ -7,7 +8,7 @@ module.exports = function (babel) {
           this.state.reactiveExprs = [];
           this.state.callExprs = [];
           innerPath.traverse(scanner, { state: this.state });
-          console.log(this.state.reactiveExprs);
+          // console.log(this.state.reactiveExprs);
           this.state.reactiveExprs = this.state.reactiveExprs.map((expr) => {
             expr.statements.reverse();
             return expr;
@@ -15,11 +16,15 @@ module.exports = function (babel) {
         },
         exit(innerPath) {
           innerPath.traverse(insertReactiveExprsVisitor, { state: this.state });
-          console.log(
-            this.state.reactiveExprs.map((expr) => expr.onCallParams.argNames)
-          );
-          console.log(this.state.callExprs);
         },
+      },
+      VariableDeclaration(innerPath) {
+        if (innerPath.node.declarations[0].id.name !== "ReactiveCall") return;
+        this.state.reactiveExprs.forEach((expr) => {
+          expr.staticState.forEach((s) => {
+            innerPath.insertAfter(s);
+          });
+        });
       },
     },
   };
@@ -33,6 +38,7 @@ const insertReactiveExprsVisitor = {
       getArgName(argNode)
     );
     this.state.callExprs.push({ funcName, argNames });
+
     for (let i = 0; i < this.state.reactiveExprs.length; i++) {
       let expr = this.state.reactiveExprs[i];
       if (expr.onCallParams.funcName === funcName) {
@@ -71,6 +77,8 @@ const reactiveExprVisitor = {
         this.reactiveExprs.push({
           onCallParams: this.onCallParams,
           statements: innerPath.node.body.slice(1),
+          staticState: this.hasStaticState ? this.staticState.declarations : [],
+          hasStaticState: this.hasStaticState,
         });
       }
     },
@@ -83,8 +91,35 @@ const reactiveExprVisitor = {
       };
       innerPath.traverse(onCallVisitor, { onCallParams });
       this.onCallParams = onCallParams;
+    } else if (innerPath.node.label.name === "StaticState") {
+      this.hasStaticState = true;
+      let staticState = {
+        declarations: [],
+        variables: [],
+      };
+      innerPath.traverse(staticStateVisitor, { staticState });
+      this.staticState = staticState;
+      innerPath.remove();
     }
   },
+};
+
+const staticStateVisitor = {
+  BlockStatement: {
+    enter(innerPath) {
+      // change and save variable names
+      innerPath.traverse(changeVariableNames, {
+        staticState: this.staticState,
+      });
+    },
+    exit(innerPath) {
+      this.staticState.declarations = innerPath.node.body;
+    },
+  },
+};
+
+const changeVariableNames = {
+  VariableDeclaration(innerPath) {},
 };
 
 const onCallVisitor = {
@@ -99,6 +134,8 @@ const onCallVisitor = {
 };
 
 function argNamesEqual(leftArgs, rightArgs) {
+  if (leftArgs[0] === "_") return true;
+  console.log(leftArgs, rightArgs);
   if (leftArgs.length !== rightArgs.length) {
     return false;
   }
